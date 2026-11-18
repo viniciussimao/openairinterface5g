@@ -80,6 +80,11 @@ void seq_arr_cell_free(void *cell)
 
 void nr_mac_cell_free(nr_cell_sched_t *cell)
 {
+  int num_beams = 1;
+  if (cell->beam_info.config.bf_method != BF_METHOD_STRAIGHT_WIRE)
+    num_beams = cell->beam_info.config.beams_per_period;
+  for (int i = 0; i < num_beams; i++)
+    free(cell->common_channels.vrb_map_UL[i]);
   free(cell->radio_config.ssb_beams);
   NR_beam_info_t *beam_info = &cell->beam_info;
   if (beam_info->beam_allocation) {
@@ -87,7 +92,30 @@ void nr_mac_cell_free(nr_cell_sched_t *cell)
       free(beam_info->beam_allocation[b]);
     free(beam_info->beam_allocation);
   }
+  nfapi_nr_config_request_scf_t *cfg = &cell->config;
+  free(cfg->prach_config.num_prach_fd_occasions_list);
+  for (int i = 0; i < cell->frame_structure.numb_slots_frame; i++)
+    free(cfg->tdd_table.max_tdd_periodicity_list[i].max_num_of_symbol_per_slot_list);
+  free(cfg->tdd_table.max_tdd_periodicity_list);
+  free(cell->UL_tti_req_ahead);
   NR_COMMON_channels_t *cc = &cell->common_channels;
+  for (int i = 0; i < get_max_ssbs(cc->ServingCellConfigCommon); i++) {
+    if (!is_ssb_configured(cc->ServingCellConfigCommon, i))
+      continue;
+    free(cell->sched_ctrlSIB1->search_space[i].controlResourceSetId);
+    free(cell->sched_ctrlSIB1->search_space[i].nrofCandidates);
+    free(cell->sched_ctrlSIB1->search_space[i].monitoringSymbolsWithinSlot->buf);
+    free(cell->sched_ctrlSIB1->search_space[i].monitoringSymbolsWithinSlot);
+    free(cell->sched_ctrlSIB1->search_space[i].monitoringSlotPeriodicityAndOffset);
+    free(cell->sched_ctrlSIB1->search_space[i].duration);
+    free(cell->sched_ctrlSIB1->search_space[i].searchSpaceType->choice.common->dci_Format0_0_AndFormat1_0);
+    free(cell->sched_ctrlSIB1->search_space[i].searchSpaceType->choice.common);
+    free(cell->sched_ctrlSIB1->search_space[i].searchSpaceType);
+  }
+  free(cell->sched_ctrlSIB1->coreset.frequencyDomainResources.buf);
+  free(cell->sched_ctrlSIB1->coreset.cce_REG_MappingType.choice.interleaved);
+  free(cell->sched_ctrlSIB1);
+  seq_arr_free(&cell->ul_tda, NULL);
   nr_mac_pcch_queue_free(cc);
   ASN_STRUCT_FREE(asn_DEF_NR_BCCH_BCH_Message, cc->mib);
   ASN_STRUCT_FREE(asn_DEF_NR_BCCH_DL_SCH_Message, cc->sib1);
