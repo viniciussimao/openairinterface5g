@@ -58,6 +58,7 @@
 #include "utils.h"
 #include "x2ap_messages_types.h"
 #include "gnb_config_common.h"
+#include "gnb_slice_policy_config.h"
 #include "positioning_nr_paramdef.h"
 #include "f1ap_cu_task.h"
 #include "openair3/NRPPA/nrppa_gNB_config.h"
@@ -1930,6 +1931,8 @@ void RCconfig_nr_macrlc(configmodule_interface_t *cfg)
 
   ngran_node_t node_type = get_node_type();
   gNB_MAC_INST *nrmac = mac_top_init_gNB(node_type, &default_rlc_config);
+  // openran-lab: cotas de PRB DL por slice (MACRLCs.[0].slice_policies, opcional)
+  gnb_read_slice_policies(nrmac);
 
   uint64_t gnb_du_id = 0;
   uint32_t gnb_id = 0;

@@ -1300,6 +1300,7 @@ set (GNB_APP_SRC
   ${OPENAIR2_DIR}/GNB_APP/gnb_config_common.c
   ${OPENAIR2_DIR}/GNB_APP/gnb_config_ng.c
   ${OPENAIR2_DIR}/GNB_APP/gnb_config_xn.c
+  ${OPENAIR2_DIR}/GNB_APP/gnb_slice_policy_config.c
   )
 
 set (MCE_APP_SRC
