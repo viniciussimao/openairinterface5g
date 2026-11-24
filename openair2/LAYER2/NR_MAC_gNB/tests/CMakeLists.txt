@@ -11,3 +11,14 @@ add_dependencies(tests test_nr_mac_gnb)
 include(GoogleTest)
 # one process per test, see test_nr_mac_gnb.cpp
 gtest_discover_tests(test_nr_mac_gnb)
+
+# openran-lab: orçamento de PRBs por slice (nr_slice_budget.c), sem depender
+# do resto do MAC
+add_executable(test_nr_slice_budget
+  test_nr_slice_budget.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/../nr_slice_budget.c
+)
+target_include_directories(test_nr_slice_budget PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..)
+target_link_libraries(test_nr_slice_budget PRIVATE GTest::gtest GTest::gtest_main)
+add_dependencies(tests test_nr_slice_budget)
+gtest_discover_tests(test_nr_slice_budget)
