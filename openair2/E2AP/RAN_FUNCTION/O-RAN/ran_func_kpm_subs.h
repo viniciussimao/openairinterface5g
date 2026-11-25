@@ -36,6 +36,9 @@ typedef struct{
 
 void init_kpm_subs_data(void);
 
+/// zera os contadores por UE de um slot (ver ran_func_kpm_state.h)
+void reset_kpm_ue_counters(size_t slot);
+
 meas_record_lst_t get_kpm_meas_value(char* kpm_meas_name, const label_info_lst_t label, uint32_t gran_period_ms, cudu_ue_info_pair_t ue_info, const size_t ue_idx, e2_node_level_stats_t* node_stats);
 
 #endif

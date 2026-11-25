@@ -3,6 +3,7 @@
  */
 
 #include "ran_func_kpm_subs.h"
+#include "ran_func_kpm_state.h"
 #include "openair2/LAYER2/NR_MAC_gNB/nr_mac_gNB.h"
 
 #include <search.h>
@@ -23,14 +24,15 @@ e2_node_level_stats_t cp_node_level_stats(const e2_node_level_stats_t *src)
   return dst;
 }
 
-/* measurements that need to store values from previous reporting period have a limitation
-   when it comes to multiple subscriptions to the same UEs; ric_req_id is unique per subscription */
+/* measurements that need to store values from previous reporting period keep them per
+   (subscription, UE) slot, see ran_func_kpm_state.h */
 typedef struct uldlcounter {
   uint32_t dl;
   uint32_t ul;
 } uldlcounter_t;
 
-static uldlcounter_t last_pdcp_sdu_total_bytes[MAX_MOBILES_PER_GNB] = {0};
+/* indexados pelo slot de ran_func_kpm_state.c: um por par (assinatura, UE) */
+static uldlcounter_t last_pdcp_sdu_total_bytes[KPM_STATE_MAX_SLOTS] = {0};
 
 static nr_pdcp_statistics_t get_pdcp_stats_per_drb(const uint32_t rrc_ue_id, const int rb_id)
 {
@@ -195,8 +197,8 @@ static meas_record_lst_t fill_RRC_ConnMean(__attribute__((unused)) const label_i
 }
 
 #if defined (NGRAN_GNB_DU)
-static uldlcounter_t last_rlc_pdu_total_bytes[MAX_MOBILES_PER_GNB] = {0};
-static uldlcounter_t last_total_prbs[MAX_MOBILES_PER_GNB] = {0};
+static uldlcounter_t last_rlc_pdu_total_bytes[KPM_STATE_MAX_SLOTS] = {0};
+static uldlcounter_t last_total_prbs[KPM_STATE_MAX_SLOTS] = {0};
 
 static nr_rlc_statistics_t get_rlc_stats_per_drb(const rnti_t rnti, const int rb_id)
 {
@@ -404,6 +406,16 @@ static kv_measure_t lst_measure[] = {
   {.key = "CARR.PUSCHMCSDist", .value = fill_CARR_PUSCHMCSDist },
 #endif
 }; 
+
+void reset_kpm_ue_counters(size_t slot)
+{
+  AssertFatal(slot < KPM_STATE_MAX_SLOTS, "slot %zu fora da tabela\n", slot);
+  last_pdcp_sdu_total_bytes[slot] = (uldlcounter_t){0};
+#if defined(NGRAN_GNB_DU)
+  last_rlc_pdu_total_bytes[slot] = (uldlcounter_t){0};
+  last_total_prbs[slot] = (uldlcounter_t){0};
+#endif
+}
 
 void init_kpm_subs_data(void)
 {

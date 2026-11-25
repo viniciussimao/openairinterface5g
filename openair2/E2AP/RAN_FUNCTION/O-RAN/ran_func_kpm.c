@@ -5,6 +5,9 @@
 #include "ran_func_kpm.h"
 #include "ran_func_kpm_subs.h"
 #include "ran_e2sm_ue_id.h"
+#include "ran_func_kpm_state.h"
+
+#include <pthread.h>
 
 #include "common/utils/ds/byte_array.h"
 #include "openair2/E1AP/e1ap_common.h"
@@ -48,9 +51,14 @@ static void free_arr_ue_id(arr_ue_id_t arr_ue_id)
   }
 }
 
-static e2_node_level_stats_t node_stats[2] = {0}; // [0] node stats collected in previous reporting period; [1] current node stats
+/* contadores da célula lidos no relatório atual; a referência do relatório
+ * anterior fica no estado de cada assinatura (ran_func_kpm_state.c) */
+static e2_node_level_stats_t node_now = {0};
 
-static meas_data_lst_t fill_kpm_meas_data_item(const meas_info_format_1_lst_t* meas_info_lst, const size_t len, const uint32_t gran_period_ms, cudu_ue_info_pair_t ue_info, const size_t ue_idx)
+/* o estado por assinatura é compartilhado entre as chamadas de read_kpm_sm() */
+static pthread_mutex_t kpm_state_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+static meas_data_lst_t fill_kpm_meas_data_item(const meas_info_format_1_lst_t* meas_info_lst, const size_t len, const uint32_t gran_period_ms, cudu_ue_info_pair_t ue_info, const size_t ue_idx, e2_node_level_stats_t* node_stats)
 {
   meas_data_lst_t data_item = {0};
 
@@ -80,7 +88,7 @@ static meas_data_lst_t fill_kpm_meas_data_item(const meas_info_format_1_lst_t* m
   return data_item;
 }
 
-static kpm_ind_msg_format_1_t fill_kpm_ind_msg_frm_1(cudu_ue_info_pair_t ue_info, const size_t ue_idx, const kpm_act_def_format_1_t* act_def_fr_1)
+static kpm_ind_msg_format_1_t fill_kpm_ind_msg_frm_1(cudu_ue_info_pair_t ue_info, const size_t ue_idx, const kpm_act_def_format_1_t* act_def_fr_1, e2_node_level_stats_t* node_stats)
 {
   kpm_ind_msg_format_1_t msg_frm_1 = {0};
 
@@ -95,7 +103,8 @@ static kpm_ind_msg_format_1_t fill_kpm_ind_msg_frm_1(cudu_ue_info_pair_t ue_info
                                                        act_def_fr_1->meas_info_lst_len,
                                                        act_def_fr_1->gran_period_ms,
                                                        ue_info,
-                                                       ue_idx);
+                                                       ue_idx,
+                                                       node_stats);
 
   // Measurement Information - OPTIONAL
   msg_frm_1.meas_info_lst_len = act_def_fr_1->meas_info_lst_len;
@@ -127,9 +136,18 @@ static cudu_ue_info_pair_t fill_ue_related_info(arr_ue_id_t* arr_ue_id, const si
   return ue_info;
 }
 
-static kpm_ind_msg_format_3_t fill_kpm_ind_msg_frm_3(arr_ue_id_t* arr_ue_id, const kpm_act_def_format_1_t* act_def_fr_1)
+static kpm_ind_msg_format_3_t fill_kpm_ind_msg_frm_3(arr_ue_id_t* arr_ue_id, const kpm_act_def_format_1_t* act_def_fr_1, kpm_sub_state_t* sub)
 {
   assert(act_def_fr_1 != NULL);
+
+  /* referência da célula e contadores por UE desta assinatura */
+  e2_node_level_stats_t* node_stats = kpm_state_node_stats(sub);
+  node_stats[1].mac_stats = node_now.mac_stats;
+  uint32_t ue_ids[MAX_MOBILES_PER_GNB];
+  size_t slots[MAX_MOBILES_PER_GNB];
+  for (size_t i = 0; i < arr_ue_id->sz; i++)
+    ue_ids[i] = fill_ue_related_info(arr_ue_id, i).rrc_ue_id;
+  kpm_state_map_ues(sub, ue_ids, arr_ue_id->sz, slots);
 
   kpm_ind_msg_format_3_t msg_frm_3 = {0};
 
@@ -146,7 +164,7 @@ static kpm_ind_msg_format_3_t fill_kpm_ind_msg_frm_3(arr_ue_id_t* arr_ue_id, con
     cudu_ue_info_pair_t ue_info = fill_ue_related_info(arr_ue_id, i);
 
     // Fill UE measurements
-    msg_frm_3.meas_report_per_ue[i].ind_msg_format_1 = fill_kpm_ind_msg_frm_1(ue_info, i, act_def_fr_1);
+    msg_frm_3.meas_report_per_ue[i].ind_msg_format_1 = fill_kpm_ind_msg_frm_1(ue_info, slots[i], act_def_fr_1, node_stats);
   }
 
   node_stats[0] = cp_node_level_stats(&node_stats[1]);
@@ -307,8 +325,8 @@ static arr_ue_id_t filter_ues_by_s_nssai_in_du_or_monolithic(const test_info_lst
     AssertFatal(arr_ue_id.sz < MAX_MOBILES_PER_GNB, "cannot have more UEs than global UE number maximum\n");
   }
 
-  node_stats[1].mac_stats.dl.total_prb_aggregate = mac->mac_stats.dl.total_prb_aggregate;
-  node_stats[1].mac_stats.ul.total_prb_aggregate = mac->mac_stats.ul.total_prb_aggregate;
+  node_now.mac_stats.dl.total_prb_aggregate = mac->mac_stats.dl.total_prb_aggregate;
+  node_now.mac_stats.ul.total_prb_aggregate = mac->mac_stats.ul.total_prb_aggregate;
   NR_SCHED_UNLOCK(&mac->sched_lock);
 
   free(sd); // if NULL, nothing happens
@@ -384,7 +402,7 @@ kpm_ind_hdr_t kpm_ind_hdr(void)
   return hdr;
 }
 
-bool read_kpm_sm(void* data)
+static bool read_kpm_sm_locked(void* data)
 {
   assert(data != NULL);
   // assert(data->type == KPM_STATS_V3_0);
@@ -415,7 +433,7 @@ bool read_kpm_sm(void* data)
           printf("[E2 AGENT][E2SM-KPM] No UE matches the condition criteria.\n");
           return false;
         }
-        kpm->ind.msg.frm_3 = fill_kpm_ind_msg_frm_3(&arr_ue_id, &frm_4->action_def_format_1);
+        kpm->ind.msg.frm_3 = fill_kpm_ind_msg_frm_3(&arr_ue_id, &frm_4->action_def_format_1, kpm_state_get_sub(kpm->act_def));
         free_arr_ue_id(arr_ue_id);
       }
       break;
@@ -426,7 +444,7 @@ bool read_kpm_sm(void* data)
       kpm->ind.msg.type = FORMAT_1_INDICATION_MESSAGE;
       cudu_ue_info_pair_t ue_info = {0}; // not used
       const size_t ue_idx = 0; // not used
-      kpm->ind.msg.frm_1 = fill_kpm_ind_msg_frm_1(ue_info, ue_idx, &kpm->act_def->frm_1);
+      kpm->ind.msg.frm_1 = fill_kpm_ind_msg_frm_1(ue_info, ue_idx, &kpm->act_def->frm_1, kpm_state_node_stats(kpm_state_get_sub(kpm->act_def)));
       break;
     }
 
@@ -436,6 +454,14 @@ bool read_kpm_sm(void* data)
   }
   
   return true;
+}
+
+bool read_kpm_sm(void* data)
+{
+  pthread_mutex_lock(&kpm_state_mtx);
+  const bool ok = read_kpm_sm_locked(data);
+  pthread_mutex_unlock(&kpm_state_mtx);
+  return ok;
 }
 
 static const char* kpm_node_meas_du[] = {
