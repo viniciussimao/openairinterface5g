@@ -20,6 +20,12 @@
 #include <unistd.h>
 #include "common/ran_context.h"
 
+#ifdef NGRAN_GNB_DU
+#include "ran_func_rc_slice.h"
+#include "common/utils/LOG/log.h"
+#include "openair2/LAYER2/NR_MAC_gNB/nr_slice_policy.h"
+#endif
+
 static pthread_once_t once_rc_mutex = PTHREAD_ONCE_INIT;
 static rc_subs_data_t rc_subs_data = {0};
 static pthread_mutex_t rc_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -448,9 +454,11 @@ static void fill_rc_radio_bearer_ctrl(seq_ctrl_style_t* ctrl_style)
   ctrl_style->ran_param_ctrl_out = NULL;
 }
 
-/* RIC Control Style Types, 7.6. Only the two below are implemented. */
+/* RIC Control Style Types, 7.6. Only the ones below are implemented; style 2
+ * only where the node has a MAC (gNB or DU). */
 typedef enum {
   RC_CTRL_STYLE_RADIO_BEARER = 1,
+  RC_CTRL_STYLE_RADIO_RESOURCE = 2,
   RC_CTRL_STYLE_CONN_MODE_MOBILITY = 3,
 } rc_ctrl_style_type_e;
 
@@ -553,16 +561,110 @@ static void fill_rc_conn_mode_mobility_ctrl(seq_ctrl_style_t* ctrl_style)
   ctrl_style->ran_param_ctrl_out = NULL;
 }
 
+#ifdef NGRAN_GNB_DU
+/** @brief Give a LIST/STRUCTURE item a nested LIST definition of sz members
+ * @return the member array, for the caller to fill */
+static ran_param_lst_struct_t* fill_ran_param_lst(ran_param_lst_struct_t* dst, uint32_t id, const char* name, size_t sz)
+{
+  dst->ran_param_id = id;
+  dst->ran_param_name = cp_str_to_ba(name);
+
+  dst->ran_param_def = calloc(1, sizeof(ran_param_def_t));
+  AssertFatal(dst->ran_param_def != NULL, "Memory exhausted");
+  dst->ran_param_def->type = LIST_RAN_PARAMETER_DEF_TYPE;
+  dst->ran_param_def->lst = calloc(1, sizeof(ran_param_type_t));
+  AssertFatal(dst->ran_param_def->lst != NULL, "Memory exhausted");
+
+  ran_param_type_t* lst = dst->ran_param_def->lst;
+  lst->sz_ran_param = sz;
+  lst->ran_param = calloc(sz, sizeof(ran_param_lst_struct_t));
+  AssertFatal(lst->ran_param != NULL, "Memory exhausted");
+
+  return lst->ran_param;
+}
+
+/* O nó tem MAC (gNB monolítico ou DU): só nele o estilo 2 faz sentido */
+static bool node_has_mac(void)
+{
+  const ngran_node_t t = get_e2_node_type();
+  return (t == ngran_gNB || t == ngran_gNB_DU) && RC.nrmac != NULL && RC.nrmac[0] != NULL;
+}
+
+/** @brief Anuncia o CONTROL estilo 2 "Radio Resource Allocation Control",
+ * 7.6.3, só com a ação 6 "Slice-level PRB quota" e a árvore de parâmetros
+ * de 8.4.3.6 (ran_func_rc_slice.h). */
+static void fill_rc_radio_resource_ctrl(seq_ctrl_style_t* ctrl_style)
+{
+  ctrl_style->style_type = RC_CTRL_STYLE_RADIO_RESOURCE;
+  ctrl_style->name = cp_str_to_ba("Radio Resource Allocation Control");
+  ctrl_style->hdr = FORMAT_1_E2SM_RC_CTRL_HDR;
+  ctrl_style->msg = FORMAT_1_E2SM_RC_CTRL_MSG;
+  ctrl_style->out_frmt = FORMAT_1_E2SM_RC_CTRL_OUT;
+  ctrl_style->call_proc_id_type = NULL;
+
+  ctrl_style->sz_seq_ctrl_act = 1;
+  ctrl_style->seq_ctrl_act = calloc(ctrl_style->sz_seq_ctrl_act, sizeof(seq_ctrl_act_2_t));
+  AssertFatal(ctrl_style->seq_ctrl_act != NULL, "Memory exhausted");
+
+  seq_ctrl_act_2_t* ctrl_act = &ctrl_style->seq_ctrl_act[0];
+  ctrl_act->id = RC_CTRL_ACT_SLICE_PRB_QUOTA;
+  ctrl_act->name = cp_str_to_ba("Slice-level PRB quota");
+
+  ctrl_act->sz_seq_assoc_ran_param = 1;
+  ctrl_act->assoc_ran_param = calloc(ctrl_act->sz_seq_assoc_ran_param, sizeof(seq_ran_param_3_t));
+  AssertFatal(ctrl_act->assoc_ran_param != NULL, "Memory exhausted");
+
+  seq_ran_param_3_t* ratio_lst = &ctrl_act->assoc_ran_param[0];
+  ratio_lst->id = RC_SLICE_RRM_POLICY_RATIO_LIST;
+  ratio_lst->name = cp_str_to_ba("RRM Policy Ratio List");
+  ratio_lst->def = calloc(1, sizeof(ran_param_def_t));
+  AssertFatal(ratio_lst->def != NULL, "Memory exhausted");
+  ratio_lst->def->type = LIST_RAN_PARAMETER_DEF_TYPE;
+  ratio_lst->def->lst = calloc(1, sizeof(ran_param_type_t));
+  AssertFatal(ratio_lst->def->lst != NULL, "Memory exhausted");
+  ratio_lst->def->lst->sz_ran_param = 1;
+  ratio_lst->def->lst->ran_param = calloc(1, sizeof(ran_param_lst_struct_t));
+  AssertFatal(ratio_lst->def->lst->ran_param != NULL, "Memory exhausted");
+
+  ran_param_lst_struct_t* grp =
+      fill_ran_param_strct(&ratio_lst->def->lst->ran_param[0], RC_SLICE_RRM_POLICY_RATIO_GROUP, "RRM Policy Ratio Group", 4);
+  ran_param_lst_struct_t* policy = fill_ran_param_strct(&grp[0], RC_SLICE_RRM_POLICY, "RRM Policy", 1);
+  fill_ran_param_leaf(&grp[1], RC_SLICE_MIN_PRB_POLICY_RATIO, "Min PRB Policy Ratio");
+  fill_ran_param_leaf(&grp[2], RC_SLICE_MAX_PRB_POLICY_RATIO, "Max PRB Policy Ratio");
+  fill_ran_param_leaf(&grp[3], RC_SLICE_DEDICATED_PRB_POLICY_RATIO, "Dedicated PRB Policy Ratio");
+
+  ran_param_lst_struct_t* mem_lst = fill_ran_param_lst(&policy[0], RC_SLICE_RRM_POLICY_MEMBER_LIST, "RRM Policy Member List", 1);
+  ran_param_lst_struct_t* member = fill_ran_param_strct(&mem_lst[0], RC_SLICE_RRM_POLICY_MEMBER, "RRM Policy Member", 2);
+  fill_ran_param_leaf(&member[0], RC_SLICE_PLMN_IDENTITY, "PLMN Identity");
+  ran_param_lst_struct_t* snssai = fill_ran_param_strct(&member[1], RC_SLICE_S_NSSAI, "S-NSSAI", 2);
+  fill_ran_param_leaf(&snssai[0], RC_SLICE_SST, "SST");
+  fill_ran_param_leaf(&snssai[1], RC_SLICE_SD, "SD");
+
+  ctrl_style->sz_ran_param_ctrl_out = 0;
+  ctrl_style->ran_param_ctrl_out = NULL;
+}
+#endif
+
 static void fill_rc_control(ran_func_def_ctrl_t* ctrl)
 {
   // Sequence of CONTROL styles
   // [1 - 63]
-  ctrl->sz_seq_ctrl_style = 2;
+  size_t n = 2;
+#ifdef NGRAN_GNB_DU
+  const bool radio_resource = node_has_mac();
+  if (radio_resource)
+    n++;
+#endif
+  ctrl->sz_seq_ctrl_style = n;
   ctrl->seq_ctrl_style = calloc(ctrl->sz_seq_ctrl_style, sizeof(seq_ctrl_style_t));
   assert(ctrl->seq_ctrl_style != NULL && "Memory exhausted");
 
   fill_rc_radio_bearer_ctrl(&ctrl->seq_ctrl_style[0]);
   fill_rc_conn_mode_mobility_ctrl(&ctrl->seq_ctrl_style[1]);
+#ifdef NGRAN_GNB_DU
+  if (radio_resource)
+    fill_rc_radio_resource_ctrl(&ctrl->seq_ctrl_style[2]);
+#endif
 }
 
 static ran_function_name_t fill_rc_ran_func_name(void)
@@ -1369,6 +1471,76 @@ static void write_ctrl_conn_mode_mobility(rc_ctrl_req_data_t const* ctrl)
 }
 #endif
 
+#ifdef NGRAN_GNB_DU
+/* O PLMN é de alguma célula servida por este MAC */
+static bool mac_serves_plmn(const gNB_MAC_INST* mac, const rc_slice_plmn_t* p)
+{
+  const f1ap_setup_req_t* sr = mac->f1_config.setup_req;
+  if (sr == NULL)
+    return false;
+  for (int i = 0; i < sr->num_cells_available; i++) {
+    const plmn_id_t* c = &sr->cell[i].info.plmn;
+    if (c->mcc == p->mcc && c->mnc == p->mnc && c->mnc_digit_length == p->mnc_digit_len)
+      return true;
+  }
+  return false;
+}
+
+/* Radio Resource Allocation Control, 7.6.3, ação 6 "Slice-level PRB quota":
+ * atualiza as cotas dos S-NSSAI da mensagem e mantém as demais. Uma lista
+ * vazia remove todas as cotas. Uma mensagem inválida não muda nada. O agente
+ * do FlexRIC responde CONTROL ACKNOWLEDGE de qualquer forma; o resultado
+ * fica no log ([SLICE]). */
+static void write_ctrl_radio_resource(rc_ctrl_req_data_t const* ctrl)
+{
+  if (ctrl->hdr.frmt_1.ctrl_act_id != RC_CTRL_ACT_SLICE_PRB_QUOTA) {
+    LOG_W(NR_MAC, "[SLICE] E2SM-RC: estilo 2, ação %d não suportada (só a %d, Slice-level PRB quota)\n",
+          ctrl->hdr.frmt_1.ctrl_act_id, RC_CTRL_ACT_SLICE_PRB_QUOTA);
+    return;
+  }
+  if (!node_has_mac()) {
+    LOG_W(NR_MAC, "[SLICE] E2SM-RC: Slice-level PRB quota exige um nó com MAC\n");
+    return;
+  }
+  gNB_MAC_INST* mac = RC.nrmac[0];
+
+  char err[192] = {0};
+  rc_slice_quota_t upd[NR_SLICE_MAX_POLICIES];
+  const int n_upd = rc_slice_quota_parse(&ctrl->msg.frmt_1, upd, NR_SLICE_MAX_POLICIES, err, sizeof(err));
+  if (n_upd < 0) {
+    LOG_W(NR_MAC, "[SLICE] E2SM-RC: Slice-level PRB quota recusada: %s\n", err);
+    return;
+  }
+  for (int i = 0; i < n_upd; i++) {
+    if (!mac_serves_plmn(mac, &upd[i].plmn)) {
+      LOG_W(NR_MAC, "[SLICE] E2SM-RC: Slice-level PRB quota recusada: PLMN %03d.%0*d não é de nenhuma célula do gNB\n",
+            upd[i].plmn.mcc, upd[i].plmn.mnc_digit_len, upd[i].plmn.mnc);
+      return;
+    }
+  }
+
+  nr_slice_policy_t next[NR_SLICE_MAX_POLICIES];
+  int n_next = 0;
+  if (n_upd > 0) {
+    nr_slice_policy_t cur[NR_SLICE_MAX_POLICIES];
+    int n_cur = nr_slice_policy_get(mac, cur, NR_SLICE_MAX_POLICIES);
+    if (n_cur > NR_SLICE_MAX_POLICIES)
+      n_cur = NR_SLICE_MAX_POLICIES;
+    n_next = rc_slice_quota_merge(cur, n_cur, upd, n_upd, next, NR_SLICE_MAX_POLICIES, err, sizeof(err));
+    if (n_next < 0) {
+      LOG_W(NR_MAC, "[SLICE] E2SM-RC: Slice-level PRB quota recusada: %s\n", err);
+      return;
+    }
+  }
+
+  if (nr_slice_policy_set(mac, next, n_next, err, sizeof(err)) != 0) {
+    LOG_W(NR_MAC, "[SLICE] E2SM-RC: Slice-level PRB quota recusada: %s\n", err);
+    return;
+  }
+  LOG_I(NR_MAC, "[SLICE] E2SM-RC: Slice-level PRB quota aplicada (%d slice(s) na mensagem, %d com cota)\n", n_upd, n_next);
+}
+#endif
+
 sm_ag_if_ans_t write_ctrl_rc_sm(void const* data)
 {
   assert(data != NULL);
@@ -1383,6 +1555,14 @@ sm_ag_if_ans_t write_ctrl_rc_sm(void const* data)
   switch (ctrl->hdr.frmt_1.ric_style_type) {
     case RC_CTRL_STYLE_RADIO_BEARER:
       write_ctrl_radio_bearer(ctrl);
+      break;
+
+    case RC_CTRL_STYLE_RADIO_RESOURCE:
+ #ifdef NGRAN_GNB_DU
+      write_ctrl_radio_resource(ctrl);
+ #else
+      printf("[E2 AGENT] \"Radio Resource Allocation Control\" not supported by %d.\n", get_e2_node_type());
+ #endif
       break;
 
     case RC_CTRL_STYLE_CONN_MODE_MOBILITY:

@@ -72,6 +72,7 @@ add_library(e2_ran_func_du_cucp_cuup STATIC
             O-RAN/ran_func_kpm_state.c
             O-RAN/ran_func_rc.c
             O-RAN/ran_func_rc_subs.c
+            O-RAN/ran_func_rc_slice.c
             ../flexric/src/sm/rc_sm/ie/rc_data_ie.c
             CUSTOMIZED/ran_func_gtp.c
             CUSTOMIZED/ran_func_pdcp.c
@@ -95,3 +96,8 @@ target_compile_definitions(e2_ran_func_du_cucp_cuup PUBLIC ${E2AP_VERSION}  ${KP
 # - CU-UP: e2_ran_func_cuup (this is available at the moment, executable nr-cuup)
 # - CU: e2_ran_func_cucp + e2_ran_func_cuup
 # - gNB-mono: e2_ran_func_du + e2_ran_func_cucp + e2_ran_func_cuup
+
+# openran-lab: testes da ação Slice-level PRB quota do E2SM-RC
+if(ENABLE_TESTS)
+  add_subdirectory(O-RAN/tests)
+endif()
