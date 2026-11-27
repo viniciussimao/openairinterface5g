@@ -217,7 +217,7 @@ TEST(rc_slice_parse, sst_and_sd_as_integer)
   EXPECT_EQ(q[0].policy.sd, 0xabcdefu);
 }
 
-TEST(rc_slice_parse, empty_list_means_clear)
+TEST(rc_slice_parse, empty_list_returns_zero)
 {
   auto m = quota_msg({});
   rc_slice_quota_t q[1];
@@ -274,4 +274,30 @@ TEST(rc_slice_merge, rejects_overflow)
   upd[0].policy = pol(1, 2, 0, 40, 0);
   nr_slice_policy_t out[1];
   EXPECT_EQ(rc_slice_quota_merge(cur, 1, upd, 1, out, 1, nullptr, 0), -1);
+}
+
+TEST(rc_slice_merge, neutral_ratio_removes_the_slice)
+{
+  const nr_slice_policy_t cur[] = {pol(1, 1, 0, 30, 0), pol(1, 2, 0, 70, 0)};
+  rc_slice_quota_t upd[2] = {};
+  upd[0].policy = pol(1, 1, 0, 100, 0);
+  upd[1].policy = pol(1, 9, 0, 100, 0); /* sem cota em vigor: nada a remover */
+
+  nr_slice_policy_t out[NR_SLICE_MAX_POLICIES];
+  ASSERT_EQ(rc_slice_quota_merge(cur, 2, upd, 2, out, NR_SLICE_MAX_POLICIES, nullptr, 0), 1);
+  EXPECT_EQ(out[0].sd, 2u);
+  EXPECT_EQ(out[0].ratio.max_ratio, 70);
+
+  rc_slice_quota_t last[1] = {};
+  last[0].policy = pol(1, 2, 0, 100, 0);
+  EXPECT_EQ(rc_slice_quota_merge(out, 1, last, 1, out, NR_SLICE_MAX_POLICIES, nullptr, 0), 0);
+}
+
+TEST(rc_slice_merge, neutral_ratio_does_not_overflow_a_full_list)
+{
+  const nr_slice_policy_t cur[] = {pol(1, 1, 0, 30, 0)};
+  rc_slice_quota_t upd[1] = {};
+  upd[0].policy = pol(1, 2, 0, 100, 0);
+  nr_slice_policy_t out[1];
+  EXPECT_EQ(rc_slice_quota_merge(cur, 1, upd, 1, out, 1, nullptr, 0), 1);
 }

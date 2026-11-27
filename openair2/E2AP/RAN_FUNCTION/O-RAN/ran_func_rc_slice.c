@@ -207,6 +207,11 @@ int rc_slice_quota_parse(const e2sm_rc_ctrl_msg_frmt_1_t *msg, rc_slice_quota_t 
   return n;
 }
 
+bool rc_slice_ratio_is_neutral(const nr_slice_ratio_t *r)
+{
+  return r->min_ratio == 0 && r->max_ratio == 100 && r->dedicated_ratio == 0;
+}
+
 int rc_slice_quota_merge(const nr_slice_policy_t *cur,
                          int n_cur,
                          const rc_slice_quota_t *upd,
@@ -229,6 +234,14 @@ int rc_slice_quota_merge(const nr_slice_policy_t *cur,
     int i = 0;
     while (i < n && !(out[i].sst == p->sst && out[i].sd == p->sd))
       i++;
+    if (rc_slice_ratio_is_neutral(&p->ratio)) {
+      /* remove a cota do slice, se houver */
+      if (i < n) {
+        memmove(&out[i], &out[i + 1], (n - i - 1) * sizeof(*out));
+        n--;
+      }
+      continue;
+    }
     if (i == n) {
       if (n >= max) {
         set_err(err, err_len, "mais de %d slices com cota", max);

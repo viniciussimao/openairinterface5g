@@ -29,7 +29,9 @@
  *       12 Dedicated PRB Policy Ratio (ELEMENT opcional, INTEGER 0..100, padrão 0)
  *
  * Os padrões seguem o RRMPolicyRatio da 3GPP TS 28.541. Todos os membros de
- * um grupo recebem as mesmas cotas.
+ * um grupo recebem as mesmas cotas. A cota neutra (min 0, max 100, ded 0) não
+ * limita nada: ela remove a cota do slice. Não há mensagem para remover todas
+ * as cotas de uma vez, porque uma LIST do E2SM-RC precisa de ao menos um item.
  */
 
 #ifndef RAN_FUNC_RC_SLICE_H
@@ -84,9 +86,9 @@ bool rc_slice_plmn_decode(const uint8_t *buf, size_t len, rc_slice_plmn_t *out);
 
 /** @brief Converte a mensagem de CONTROL da ação 6 em cotas.
  *
- * Exige o parâmetro 1 (LIST). Uma lista vazia é válida e devolve 0: o
- * handler a usa para remover todas as cotas. Não valida as regras entre
- * cotas (soma dos mínimos, repetição): isso é com nr_slice_policy_validate().
+ * Exige o parâmetro 1 (LIST). Uma lista vazia, que o codificador ASN.1 não
+ * gera, devolve 0. Não valida as regras entre cotas (soma dos mínimos):
+ * isso é com nr_slice_policy_validate().
  *
  * @param msg mensagem de CONTROL formato 1
  * @param out saída (até max cotas)
@@ -96,10 +98,15 @@ bool rc_slice_plmn_decode(const uint8_t *buf, size_t len, rc_slice_plmn_t *out);
  * @return número de cotas, ou -1 se a mensagem é inválida */
 int rc_slice_quota_parse(const e2sm_rc_ctrl_msg_frmt_1_t *msg, rc_slice_quota_t *out, int max, char *err, size_t err_len);
 
+/** @brief A cota não limita nada (min 0, max 100, ded 0): remove a do slice */
+bool rc_slice_ratio_is_neutral(const nr_slice_ratio_t *r);
+
 /** @brief Mescla as cotas recebidas com as cotas em vigor.
  *
  * Cada cota recebida substitui a do mesmo S-NSSAI ou entra no fim da lista;
- * as cotas em vigor de outros S-NSSAI ficam como estão.
+ * as cotas em vigor de outros S-NSSAI ficam como estão. Uma cota neutra
+ * (rc_slice_ratio_is_neutral()) tira o slice da lista; sem nenhum slice, o
+ * resultado é 0 e o handler volta à alocação sem cotas.
  *
  * @return número de cotas em out, ou -1 se passar de max */
 int rc_slice_quota_merge(const nr_slice_policy_t *cur,

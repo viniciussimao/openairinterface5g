@@ -1487,8 +1487,9 @@ static bool mac_serves_plmn(const gNB_MAC_INST* mac, const rc_slice_plmn_t* p)
 }
 
 /* Radio Resource Allocation Control, 7.6.3, ação 6 "Slice-level PRB quota":
- * atualiza as cotas dos S-NSSAI da mensagem e mantém as demais. Uma lista
- * vazia remove todas as cotas. Uma mensagem inválida não muda nada. O agente
+ * atualiza as cotas dos S-NSSAI da mensagem e mantém as demais. A cota
+ * neutra (min 0, max 100, ded 0) remove a do slice; sem nenhuma cota, o DL
+ * volta à alocação padrão. Uma mensagem inválida não muda nada. O agente
  * do FlexRIC responde CONTROL ACKNOWLEDGE de qualquer forma; o resultado
  * fica no log ([SLICE]). */
 static void write_ctrl_radio_resource(rc_ctrl_req_data_t const* ctrl)
